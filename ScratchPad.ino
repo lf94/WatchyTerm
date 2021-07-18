@@ -1,8 +1,15 @@
 #define ENABLE_GxEPD2_GFX 0
 
-#include <Wire.h>
+// No bluetooth locally to test right now.
+// #include <BLEDevice.h>
+// #include <BLEUtils.h>
+// #include <BLEServer.h>
+
 #include <GxEPD2_BW.h>
 #include <U8g2_for_Adafruit_GFX.h>
+
+// Holds the image for the screenblock
+#include "screenblock.h"
 
 // (Instructed by a demonstration, which has "old" and "new" styles:)
 // Select the display class and display driver class in the following file (new style):
@@ -45,6 +52,10 @@ U8G2_FOR_ADAFRUIT_GFX u8g2Fonts;
 // This is font independent! Manually check.
 #define LINES_PER_PAGE 14
 #define HALF_PAGE LINES_PER_PAGE / 2
+
+// Bluetooth definitions
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
 enum ScrollDirection {
   ScrollForward = 1,
@@ -190,22 +201,68 @@ void text_buffer_scroll_half_page(TextBuffer* tb, ScrollDirection direction) {
 // RTC_DATA_ATTR is a macro to use "RTC Slow RAM". There is only about 4kb of it.
 RTC_DATA_ATTR TextBuffer text_buffer;
 RTC_DATA_ATTR uint8_t has_booted = 0;
+RTC_DATA_ATTR uint8_t is_listening = 0;
 
-void handle_button_interrupt() {
+//void init_bluetooth_server() {
+//  BLEDevice::init("WatchyTerm");
+//  BLEServer *pServer = BLEDevice::createServer();
+//  BLEService *pService = pServer->createService(SERVICE_UUID);
+//  BLECharacteristic *pCharacteristic =
+//    pService->createCharacteristic(
+//      CHARACTERISTIC_UUID,
+//      BLECharacteristic::PROPERTY_WRITE
+//    );
+//
+//  pCharacteristic->setValue("Hello World says Neil");
+//  pService->start();
+//  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+//  pAdvertising->addServiceUUID(SERVICE_UUID);
+//  pAdvertising->setScanResponse(true);
+//
+//  // Taken from https://github.com/nkolban/ESP32_BLE_Arduino/blob/master/examples/BLE_server/BLE_server.ino
+//  // functions that help with iPhone connections issue   
+//  pAdvertising->setMinPreferred(0x06);
+//  pAdvertising->setMinPreferred(0x12);
+//  
+//  BLEDevice::startAdvertising();
+//}
+
+void screenblock() {
+  display.fillScreen(FG);
+  display.drawBitmap(0, 0, epd_bitmap_screenblock, DISPLAY_WIDTH, DISPLAY_HEIGHT, BG);
+  display.display();
+}
+
+uint8_t handle_button_interrupt() {
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
 
-  if (wakeup_reason != ESP_SLEEP_WAKEUP_EXT1) { return; }
+  if (wakeup_reason != ESP_SLEEP_WAKEUP_EXT1) { return 1; }
 
   uint64_t button_bits = esp_sleep_get_ext1_wakeup_status();
   if (button_bits & TOP_LEFT_BTN_MASK) {
     text_buffer_scroll_half_page(&text_buffer, ScrollBackward);
+    text_buffer_print(&text_buffer);
+    return 1;
   } else if (button_bits & TOP_RIGHT_BTN_MASK) {
-    Serial.println("TOP RIGHT");
+    if (is_listening == 0) {
+      //init_bluetooth_server();
+      is_listening = 1;
+      return 1;
+    } else {
+      // Just put the device back into sleep mode
+      is_listening = 0;
+      return 1;
+    }
   } else if (button_bits & BOTTOM_RIGHT_BTN_MASK) {
-    Serial.println("BOTTOM RIGHT");
+    screenblock();
+    return 1;
   } else if (button_bits & BOTTOM_LEFT_BTN_MASK) {
     text_buffer_scroll_half_page(&text_buffer, ScrollForward);
+    text_buffer_print(&text_buffer);
+    return 1;
   }
+
+  return 1;
 }
 
 void setup()
@@ -222,23 +279,37 @@ void setup()
   u8g2Fonts.setBackgroundColor(BG);
   u8g2Fonts.setFont(u8g2_font_ncenB10_tf);
 
+  uint8_t should_go_back_to_sleep = 1;
+
   if (has_booted == 0) {
     text_buffer_default(&text_buffer);
     
     char text[400];
-    sprintf(text, "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\neeeeeeeeeeeeeeaoteuaoehusaoheischaosrcuhaoeuaoeuthasoetuhatonehuntaohutasoetuh\n15\n16\n17\n18\n19\n20");
-    text_buffer_insert(&text_buffer, text);
+    sprintf(text, 
+      "0 | s, soft c, z, x (xylophone)\n"
+      "1 | t, d , th (this)\n"
+      "2 | n\n"
+      "3 | m\n"
+      "4 | r\n"
+      "5 | l\n"
+      "6 | ch (cheese, chef), j, sh\n"
+      "7 | k, q, hard g, ch (loch)\n"
+      "8 | f, ph (phone), v, gh (laugh)\n"
+      "9 | p, b\n"
+    );
     
+    text_buffer_insert(&text_buffer, text);
+    text_buffer_print(&text_buffer);
+      
     has_booted = 1;
   } else {
-    Serial.println("Woke up");
-    handle_button_interrupt();
+    should_go_back_to_sleep = handle_button_interrupt();
   }
 
-  text_buffer_print(&text_buffer);
-  
-  esp_sleep_enable_ext1_wakeup(BTN_PIN_MASK, ESP_EXT1_WAKEUP_ANY_HIGH);
-  esp_deep_sleep_start();
+  if (should_go_back_to_sleep) { 
+    esp_sleep_enable_ext1_wakeup(BTN_PIN_MASK, ESP_EXT1_WAKEUP_ANY_HIGH);
+    esp_deep_sleep_start();
+  }
 }
 
 // Not used at all.
